@@ -1,6 +1,6 @@
 from PyQt5.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QGraphicsView, QGraphicsScene, \
     QLineEdit, QFileDialog, QMessageBox, QDialog, QFormLayout, QLabel, QTabWidget, QTableWidget, QTableWidgetItem, \
-    QTextBrowser, QComboBox, QSpinBox
+    QTextBrowser, QComboBox, QSpinBox, QMenu, QAction
 from PyQt5.QtGui import QPen, QFont, QPixmap, QPainter
 from PyQt5.QtCore import Qt, QRectF
 from gedcom_handler import GedcomHandler
@@ -13,23 +13,24 @@ import shutil
 
 
 class PersonDialog(QDialog):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, person_data=None):
         super().__init__(parent)
-        self.setWindowTitle("Добавить человека")
+        self.person_data = person_data
+        self.setWindowTitle("Добавить человека" if not person_data else "Изменить человека")
         self.init_ui()
 
     def init_ui(self):
         layout = QFormLayout()
 
-        self.surname = QLineEdit()
-        self.name = QLineEdit()
-        self.patronymic = QLineEdit()
-        self.birth_date = QLineEdit()
-        self.death_date = QLineEdit()
-        self.birth_place = QLineEdit()
-        self.death_place = QLineEdit()
-        self.notes = QLineEdit()
-        self.image_path = QLineEdit()
+        self.surname = QLineEdit(self.person_data.get("surname", "") if self.person_data else "")
+        self.name = QLineEdit(self.person_data.get("name", "") if self.person_data else "")
+        self.patronymic = QLineEdit(self.person_data.get("patronymic", "") if self.person_data else "")
+        self.birth_date = QLineEdit(self.person_data.get("birth_date", "") if self.person_data else "")
+        self.death_date = QLineEdit(self.person_data.get("death_date", "") if self.person_data else "")
+        self.birth_place = QLineEdit(self.person_data.get("birth_place", "") if self.person_data else "")
+        self.death_place = QLineEdit(self.person_data.get("death_place", "") if self.person_data else "")
+        self.notes = QLineEdit(self.person_data.get("notes", "") if self.person_data else "")
+        self.image_path = QLineEdit(self.person_data.get("image_path", "") if self.person_data else "")
         self.image_path.setReadOnly(True)
 
         layout.addRow("Фамилия:", self.surname)
@@ -47,7 +48,7 @@ class PersonDialog(QDialog):
         layout.addRow(choose_image)
 
         buttons = QHBoxLayout()
-        ok_button = QPushButton("Добавить")
+        ok_button = QPushButton("Сохранить" if self.person_data else "Добавить")
         ok_button.clicked.connect(self.accept)
         cancel_button = QPushButton("Отмена")
         cancel_button.clicked.connect(self.reject)
@@ -84,6 +85,7 @@ class GenealogyApp(QMainWindow):
         self.stats = FamilyStats(self.tree)
         self.settings = SettingsManager()
         self.scale_factor = self.settings.get_setting("default_scale", 1.0)
+        self.node_to_id = {}  # Для контекстного меню: узел -> ID персоны
         self.init_ui()
         self.load_styles()
 
@@ -184,6 +186,8 @@ class GenealogyApp(QMainWindow):
         self.view.setOptimizationFlag(QGraphicsView.DontAdjustForAntialiasing, True)
         self.view.setDragMode(QGraphicsView.ScrollHandDrag)
         self.view.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
+        self.view.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.view.customContextMenuRequested.connect(self.show_context_menu)
         tree_layout.addWidget(self.view, 4)
         self.tabs.addTab(tree_widget, "Древо")
 
@@ -235,8 +239,8 @@ class GenealogyApp(QMainWindow):
         about_text.setOpenExternalLinks(True)
         about_text.setText("""
         <h2>MatsDrevo</h2>
-        <p>Версия: концепт</p>
-        <p>Автор: Mats Studio</p>
+        <p>Версия: 1.0</p>
+        <p>Автор: xAI</p>
         <p>Описание: Программа для создания и управления генеалогическими деревьями. Поддерживает добавление до 1500 человек, импорт/экспорт GEDCOM, изображения, зум и расширенные данные о персонах.</p>
         <p>Канал студии: <a href="https://t.me/MatsStudio">https://t.me/MatsStudio</a></p>
         """)
@@ -249,14 +253,15 @@ class GenealogyApp(QMainWindow):
 
     def load_styles(self):
         # Загрузка стилей
-        theme = self.settings.get_setting("theme", "Светлая")
-        if theme == "Тёмная":
-            style_file = "styles_dark.css"
-        else:
-            style_file = "styles.css"
-        if os.path.exists(style_file):
-            with open(style_file, "r", encoding="utf-8") as f:
-                self.setStyleSheet(f.read())
+        try:
+            theme = self.settings.get_setting("theme", "Светлая")
+            style_file = "styles_dark.css" if theme == "Тёмная" else "styles.css"
+            if os.path.exists(style_file):
+                with open(style_file, "r", encoding="utf-8") as f:
+                    self.setStyleSheet(f.read())
+            self.update_tree_view()  # Перерисовка для применения шрифта
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка стилей", f"Не удалось загрузить стили: {str(e)}")
 
     def add_person(self):
         # Открытие диалогового окна для добавления человека
@@ -311,6 +316,7 @@ class GenealogyApp(QMainWindow):
         # Обновление графического представления дерева
         try:
             self.scene.clear()
+            self.node_to_id.clear()
             if not self.tree.people:
                 return
 
@@ -321,23 +327,44 @@ class GenealogyApp(QMainWindow):
             spacing_y = 120
             visited = set()
 
-            def assign_positions(person_id, x=0, y=0, level=0):
-                if person_id not in self.tree.people or person_id in visited:
-                    return
+            def get_level(person_id, memo={}):
+                if person_id in memo:
+                    return memo[person_id]
+                if person_id not in self.tree.people:
+                    return 0
+                person = self.tree.people[person_id]
+                parent_levels = [get_level(parent_id, memo) + 1 for parent_id in person.get("parents", []) if
+                                 parent_id in self.tree.people]
+                level = max(parent_levels, default=0)
+                memo[person_id] = level
+                return level
+
+            def assign_positions(person_id, x=0, level=0):
+                if person_id in visited or person_id not in self.tree.people:
+                    return x
                 visited.add(person_id)
                 person = self.tree.people[person_id]
-                positions[person_id] = (x, y + level * spacing_y)
+                current_level = get_level(person_id)
+                if level != current_level:
+                    return x  # Пропускаем, если уровень не соответствует
+                positions[person_id] = (x, level * spacing_y)
                 children = person.get("children", [])
                 num_children = len(children)
+                next_x = x
                 for i, child_id in enumerate(children):
                     if child_id in self.tree.people:
-                        child_x = x + (i - num_children / 2 + 0.5) * spacing_x
-                        assign_positions(child_id, child_x, y, level + 1)
+                        child_x = assign_positions(child_id, next_x, level + 1)
+                        next_x = child_x + spacing_x
+                return next_x
 
-            # Поиск всех персон (даже без родителей)
-            all_ids = list(self.tree.people.keys())
-            for i, person_id in enumerate(all_ids):
-                assign_positions(person_id, i * spacing_x, 0, 0)
+            # Поиск корневых узлов
+            root_ids = [pid for pid, p in self.tree.people.items() if not p.get("parents")]
+            if not root_ids:  # Если нет корневых, берём всех
+                root_ids = list(self.tree.people.keys())
+
+            x_offset = 0
+            for root_id in root_ids:
+                x_offset = assign_positions(root_id, x_offset, 0)
 
             # Отрисовка узлов и связей
             font_size = self.settings.get_setting("font_size", 10)
@@ -349,9 +376,12 @@ class GenealogyApp(QMainWindow):
                 image_path = person.get("image_path", "")
                 if image_path and os.path.exists(image_path):
                     pixmap = QPixmap(image_path).scaled(image_size, image_size, Qt.KeepAspectRatio)
-                    self.scene.addPixmap(pixmap).setPos(x, y)
+                    image_item = self.scene.addPixmap(pixmap)
+                    image_item.setPos(x, y)
+                    self.node_to_id[id(image_item)] = pid
                 else:
-                    self.scene.addRect(x, y, image_size, image_size, QPen(Qt.gray), Qt.lightGray)
+                    rect_item = self.scene.addRect(x, y, image_size, image_size, QPen(Qt.gray), Qt.lightGray)
+                    self.node_to_id[id(rect_item)] = pid
 
                 # Отрисовка текста
                 text = f"{person['surname']} {person['name']} {person['patronymic']}\nID: {pid}".strip()
@@ -359,6 +389,8 @@ class GenealogyApp(QMainWindow):
                 text_item = self.scene.addText(text)
                 text_item.setFont(QFont("Arial", font_size))
                 text_item.setPos(x + image_size + 10, y + 10)
+                self.node_to_id[id(text_item)] = pid
+                self.node_to_id[id(rect)] = pid
 
                 # Отрисовка связей
                 for child_id in person.get("children", []):
@@ -373,6 +405,135 @@ class GenealogyApp(QMainWindow):
                 self.view.scale(self.scale_factor, self.scale_factor)
         except Exception as e:
             QMessageBox.critical(self, "Ошибка отображения", f"Не удалось обновить дерево: {str(e)}")
+
+    def show_context_menu(self, pos):
+        # Контекстное меню для древа
+        try:
+            item = self.view.itemAt(pos)
+            if not item or id(item) not in self.node_to_id:
+                return
+            person_id = self.node_to_id[id(item)]
+            person = self.tree.get_person(person_id)
+            if not person:
+                return
+
+            menu = QMenu(self)
+            create_menu = QMenu("Создать", self)
+
+            spouse_action = QAction("Супруга", self)
+            spouse_action.triggered.connect(lambda: self.create_relative(person_id, "spouse"))
+            create_menu.addAction(spouse_action)
+
+            mother_action = QAction("Мать", self)
+            mother_action.triggered.connect(lambda: self.create_relative(person_id, "mother"))
+            create_menu.addAction(mother_action)
+
+            father_action = QAction("Отец", self)
+            father_action.triggered.connect(lambda: self.create_relative(person_id, "father"))
+            create_menu.addAction(father_action)
+
+            son_action = QAction("Сын", self)
+            son_action.triggered.connect(lambda: self.create_relative(person_id, "son"))
+            create_menu.addAction(son_action)
+
+            daughter_action = QAction("Дочь", self)
+            daughter_action.triggered.connect(lambda: self.create_relative(person_id, "daughter"))
+            create_menu.addAction(daughter_action)
+
+            brother_action = QAction("Брат", self)
+            brother_action.triggered.connect(lambda: self.create_relative(person_id, "brother"))
+            create_menu.addAction(brother_action)
+
+            sister_action = QAction("Сестра", self)
+            sister_action.triggered.connect(lambda: self.create_relative(person_id, "sister"))
+            create_menu.addAction(sister_action)
+
+            menu.addMenu(create_menu)
+
+            edit_action = QAction("Изменить", self)
+            edit_action.triggered.connect(lambda: self.edit_person(person_id))
+            menu.addAction(edit_action)
+
+            delete_action = QAction("Удалить", self)
+            delete_action.triggered.connect(lambda: self.delete_person(person_id))
+            menu.addAction(delete_action)
+
+            menu.exec_(self.view.mapToGlobal(pos))
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка меню", f"Не удалось открыть контекстное меню: {str(e)}")
+
+    def create_relative(self, person_id, relation):
+        # Создание родственника
+        try:
+            dialog = PersonDialog(self)
+            if dialog.exec_():
+                data = dialog.get_data()
+                new_person_id = self.tree.add_person(data)
+                person = self.tree.get_person(person_id)
+
+                if relation == "spouse":
+                    # Супруг не требует прямой связи в дереве
+                    pass
+                elif relation == "mother" or relation == "father":
+                    self.tree.people[new_person_id]["children"].append(person_id)
+                    self.tree.people[person_id]["parents"].append(new_person_id)
+                elif relation == "son" or relation == "daughter":
+                    self.tree.people[person_id]["children"].append(new_person_id)
+                    self.tree.people[new_person_id]["parents"].append(person_id)
+                elif relation == "brother" or relation == "sister":
+                    for parent_id in person.get("parents", []):
+                        self.tree.people[parent_id]["children"].append(new_person_id)
+                        self.tree.people[new_person_id]["parents"].append(parent_id)
+
+                self.update_tree_view()
+                self.update_persons_table()
+                self.update_stats()
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка создания", f"Не удалось создать родственника: {str(e)}")
+
+    def edit_person(self, person_id):
+        # Редактирование персоны
+        try:
+            person = self.tree.get_person(person_id)
+            dialog = PersonDialog(self, person)
+            if dialog.exec_():
+                new_data = dialog.get_data()
+                # Обновляем данные, сохраняя связи
+                self.tree.people[person_id].update({
+                    "surname": new_data["surname"],
+                    "name": new_data["name"],
+                    "patronymic": new_data["patronymic"],
+                    "birth_date": new_data["birth_date"],
+                    "death_date": new_data["death_date"],
+                    "birth_place": new_data["birth_place"],
+                    "death_place": new_data["death_place"],
+                    "notes": new_data["notes"],
+                    "image_path": new_data["image_path"]
+                })
+                # Копирование нового изображения
+                if new_data["image_path"] and os.path.exists(new_data["image_path"]):
+                    import shutil
+                    os.makedirs("images", exist_ok=True)
+                    dest_path = f"images/{person_id}{os.path.splitext(new_data['image_path'])[1]}"
+                    shutil.copy(new_data["image_path"], dest_path)
+                    self.tree.people[person_id]["image_path"] = dest_path
+                self.update_tree_view()
+                self.update_persons_table()
+                self.update_stats()
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка редактирования", f"Не удалось изменить персону: {str(e)}")
+
+    def delete_person(self, person_id):
+        # Удаление персоны
+        try:
+            if QMessageBox.question(self, "Подтверждение",
+                                    "Вы уверены, что хотите удалить эту персону?") == QMessageBox.Yes:
+                self.tree.remove_person(person_id)
+                self.update_tree_view()
+                self.update_persons_table()
+                self.update_stats()
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка удаления", f"Не удалось удалить персону: {str(e)}")
 
     def wheelEvent(self, event):
         # Обработка зума колесиком мыши
@@ -517,25 +678,34 @@ class GenealogyApp(QMainWindow):
 
     def change_theme(self, theme):
         # Изменение темы
-        self.settings.set_setting("theme", theme)
-        self.load_styles()
-        self.update_tree_view()
+        try:
+            self.settings.set_setting("theme", theme)
+            self.load_styles()
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка темы", f"Не удалось изменить тему: {str(e)}")
 
     def change_scale(self, value):
         # Изменение масштаба
-        self.scale_factor = value / 100.0
-        self.settings.set_setting("default_scale", self.scale_factor)
-        self.update_tree_view()
+        try:
+            self.scale_factor = value / 100.0
+            self.settings.set_setting("default_scale", self.scale_factor)
+            self.update_tree_view()
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка масштаба", f"Не удалось изменить масштаб: {str(e)}")
 
     def change_font_size(self, size):
         # Изменение размера шрифта
-        self.settings.set_setting("font_size", size)
-        self.update_tree_view()
+        try:
+            self.settings.set_setting("font_size", size)
+            self.update_tree_view()
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка шрифта", f"Не удалось изменить размер шрифта: {str(e)}")
 
     def save_settings(self):
         # Сохранение настроек
         try:
             self.settings.save_settings()
+            self.load_styles()
             QMessageBox.information(self, "Успех", "Настройки сохранены")
         except Exception as e:
             QMessageBox.critical(self, "Ошибка сохранения", f"Не удалось сохранить настройки: {str(e)}")
