@@ -31,3 +31,50 @@ QGraphicsView {
     border: 1px solid #ddd;
     border-radius: 5px;
 }
+
+QDialog {
+    background-color: #ffffff;
+    border: 1px solid #ccc;
+    border-radius: 10px;
+}
+
+QLabel {
+    font-size: 14px;
+    color: #333;
+}
+
+QTabWidget::pane {
+    border: 1px solid #ccc;
+    background: #ffffff;
+    border-radius: 5px;
+}
+
+QTabBar::tab {
+    background: #e0e0e0;
+    border: 1px solid #ccc;
+    padding: 10px;
+    border-top-left-radius: 5px;
+    border-top-right-radius: 5px;
+}
+
+QTabBar::tab:selected {
+    background: #6200ea;
+    color: white;
+}
+
+QTableWidget {
+    border: 1px solid #ccc;
+    background: white;
+    font-size: 14px;
+}
+
+QTableWidget::item {
+    padding: 5px;
+}
+
+QTextEdit {
+    border: 1px solid #ccc;
+    background: white;
+    font-size: 14px;
+    padding: 10px;
+}

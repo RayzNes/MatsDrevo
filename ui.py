@@ -1,6 +1,7 @@
 from PyQt5.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QGraphicsView, QGraphicsScene, \
-    QLineEdit, QFileDialog, QMessageBox, QDialog, QFormLayout, QLabel
-from PyQt5.QtGui import QPen, QFont, QPixmap, QImage, QPainter
+    QLineEdit, QFileDialog, QMessageBox, QDialog, QFormLayout, QLabel, QTabWidget, QTableWidget, QTableWidgetItem, \
+    QTextEdit
+from PyQt5.QtGui import QPen, QFont, QPixmap, QPainter
 from PyQt5.QtCore import Qt, QRectF
 from gedcom_handler import GedcomHandler
 import os
@@ -63,7 +64,7 @@ class PersonDialog(QDialog):
             "patronymic": self.patronymic.text().strip(),
             "birth_date": self.birth_date.text().strip(),
             "death_date": self.death_date.text().strip(),
-            "birth_place": self.birth_place.text().strip(),
+            "birth_place": self_birth_place.text().strip(),
             "death_place": self.death_place.text().strip(),
             "notes": self.notes.text().strip(),
             "image_path": self.image_path.text().strip()
@@ -75,6 +76,7 @@ class GenealogyApp(QMainWindow):
         super().__init__()
         self.tree = tree
         self.gedcom_handler = GedcomHandler(self.tree)
+        self.scale_factor = 1.0  # Для зума
         self.init_ui()
         self.load_styles()
 
@@ -86,7 +88,27 @@ class GenealogyApp(QMainWindow):
         # Основной контейнер
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
-        main_layout = QHBoxLayout(central_widget)
+        main_layout = QVBoxLayout(central_widget)
+
+        # Вкладки
+        self.tabs = QTabWidget()
+        main_layout.addWidget(self.tabs)
+
+        # Вкладка "Люди"
+        people_widget = QWidget()
+        people_layout = QVBoxLayout(people_widget)
+        self.people_table = QTableWidget()
+        self.people_table.setColumnCount(9)
+        self.people_table.setHorizontalHeaderLabels(
+            ["ID", "Фамилия", "Имя", "Отчество", "Дата рождения", "Дата смерти", "Место рождения", "Место смерти",
+             "Заметки"])
+        self.people_table.horizontalHeader().setStretchLastSection(True)
+        people_layout.addWidget(self.people_table)
+        self.tabs.addTab(people_widget, "Люди")
+
+        # Вкладка "Древо"
+        tree_widget = QWidget()
+        tree_layout = QHBoxLayout(tree_widget)
 
         # Панель управления
         control_panel = QWidget()
@@ -112,17 +134,44 @@ class GenealogyApp(QMainWindow):
         export_button.clicked.connect(self.export_gedcom)
         control_layout.addWidget(export_button)
 
+        # Кнопки зума
+        zoom_in_button = QPushButton("Увеличить")
+        zoom_in_button.clicked.connect(self.zoom_in)
+        control_layout.addWidget(zoom_in_button)
+
+        zoom_out_button = QPushButton("Уменьшить")
+        zoom_out_button.clicked.connect(self.zoom_out)
+        control_layout.addWidget(zoom_out_button)
+
         control_layout.addStretch()
-        main_layout.addWidget(control_panel, 1)
+        tree_layout.addWidget(control_panel, 1)
 
         # Графическое представление дерева
         self.scene = QGraphicsScene()
         self.view = QGraphicsView(self.scene)
         self.view.setRenderHint(QPainter.Antialiasing)
         self.view.setOptimizationFlag(QGraphicsView.DontAdjustForAntialiasing, True)
-        main_layout.addWidget(self.view, 4)
+        self.view.setDragMode(QGraphicsView.ScrollHandDrag)
+        self.view.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
+        tree_layout.addWidget(self.view, 4)
+        self.tabs.addTab(tree_widget, "Древо")
+
+        # Вкладка "О программе"
+        about_widget = QWidget()
+        about_layout = QVBoxLayout(about_widget)
+        about_text = QTextEdit()
+        about_text.setReadOnly(True)
+        about_text.setText("""
+        <h2>MatsDrevo</h2>
+        <p>Версия: 1.0</p>
+        <p>Автор: xAI</p>
+        <p>Описание: Программа для создания и управления генеалогическими деревьями. Поддерживает добавление до 1500 человек, импорт/экспорт GEDCOM, изображения и расширенные данные о персонах.</p>
+        """)
+        about_layout.addWidget(about_text)
+        self.tabs.addTab(about_widget, "О программе")
 
         self.update_tree_view()
+        self.update_people_table()
 
     def load_styles(self):
         # Загрузка стилей из файла styles.css
@@ -138,6 +187,7 @@ class GenealogyApp(QMainWindow):
             parent_id = self.parent_input.text().strip()
             self.tree.add_person(data, parent_id if parent_id else None)
             self.update_tree_view()
+            self.update_people_table()
             self.parent_input.clear()
 
     def remove_person(self):
@@ -146,8 +196,26 @@ class GenealogyApp(QMainWindow):
         if person_id and person_id in self.tree.people:
             self.tree.remove_person(person_id)
             self.update_tree_view()
+            self.update_people_table()
         else:
             QMessageBox.warning(self, "Ошибка ввода", "Неверный ID человека")
+
+    def update_people_table(self):
+        # Обновление таблицы людей
+        self.people_table.setRowCount(len(self.tree.people))
+        row = 0
+        for pid, person in self.tree.people.items():
+            self.people_table.setItem(row, 0, QTableWidgetItem(pid))
+            self.people_table.setItem(row, 1, QTableWidgetItem(person["surname"]))
+            self.people_table.setItem(row, 2, QTableWidgetItem(person["name"]))
+            self.people_table.setItem(row, 3, QTableWidgetItem(person["patronymic"]))
+            self.people_table.setItem(row, 4, QTableWidgetItem(person["birth_date"]))
+            self.people_table.setItem(row, 5, QTableWidgetItem(person["death_date"]))
+            self.people_table.setItem(row, 6, QTableWidgetItem(person["birth_place"]))
+            self.people_table.setItem(row, 7, QTableWidgetItem(person["death_place"]))
+            self.people_table.setItem(row, 8, QTableWidgetItem(person["notes"]))
+            row += 1
+        self.people_table.resizeColumnsToContents()
 
     def update_tree_view(self):
         # Обновление графического представления дерева
@@ -209,6 +277,39 @@ class GenealogyApp(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Ошибка отображения", f"Не удалось обновить дерево: {str(e)}")
 
+    def wheelEvent(self, event):
+        # Обработка зума колесиком мыши
+        zoom_in_factor = 1.25
+        zoom_out_factor = 1 / zoom_in_factor
+        old_pos = self.view.mapToScene(event.pos())
+        if event.angleDelta().y() > 0:
+            zoom_factor = zoom_in_factor
+        else:
+            zoom_factor = zoom_out_factor
+        self.scale_factor *= zoom_factor
+        if self.scale_factor < 0.2:
+            self.scale_factor = 0.2
+        elif self.scale_factor > 5.0:
+            self.scale_factor = 5.0
+        self.view.scale(zoom_factor, zoom_factor)
+        new_pos = self.view.mapToScene(event.pos())
+        delta = new_pos - old_pos
+        self.view.translate(delta.x(), delta.y())
+
+    def zoom_in(self):
+        # Увеличение масштаба
+        self.scale_factor *= 1.25
+        if self.scale_factor > 5.0:
+            self.scale_factor = 5.0
+        self.view.scale(1.25, 1.25)
+
+    def zoom_out(self):
+        # Уменьшение масштаба
+        self.scale_factor /= 1.25
+        if self.scale_factor < 0.2:
+            self.scale_factor = 0.2
+        self.view.scale(0.8, 0.8)
+
     def import_gedcom(self):
         # Импорт GEDCOM-файла
         file_name, _ = QFileDialog.getOpenFileName(self, "Импортировать GEDCOM", "", "GEDCOM Files (*.ged)")
@@ -216,6 +317,7 @@ class GenealogyApp(QMainWindow):
             try:
                 self.gedcom_handler.import_gedcom(file_name)
                 self.update_tree_view()
+                self.update_people_table()
             except Exception as e:
                 QMessageBox.critical(self, "Ошибка импорта", f"Не удалось импортировать GEDCOM: {str(e)}")
 
