@@ -72,9 +72,20 @@ QTableWidget::item {
     padding: 5px;
 }
 
-QTextEdit {
+QTextEdit, QTextBrowser {
     border: 1px solid #ccc;
     background: white;
     font-size: 14px;
     padding: 10px;
+}
+
+QComboBox, QSpinBox {
+    border: 1px solid #ccc;
+    border-radius: 5px;
+    padding: 8px;
+    font-size: 14px;
+}
+
+QComboBox:focus, QSpinBox:focus {
+    border-color: #6200ea;
 }
