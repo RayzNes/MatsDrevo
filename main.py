@@ -9,7 +9,7 @@ if __name__ == "__main__":
     # Инициализация модели данных
     tree = FamilyTree()
 
-    # Инициализация UI
+    # Инициализация UI с названием MatsDrevo
     window = GenealogyApp(tree)
     window.show()
 

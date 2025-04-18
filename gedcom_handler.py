@@ -21,9 +21,38 @@ class GedcomHandler:
                 if isinstance(element, IndividualElement):
                     person_id = element.get_pointer()
                     if not person_id:
-                        continue  # Пропуск некорректных записей
-                    name = " ".join(filter(None, element.get_name())).strip() or "Без имени"
-                    self.tree.add_person(name)
+                        continue
+                    name_parts = element.get_name()
+                    surname = name_parts[1].strip() if name_parts[1] else ""
+                    name = name_parts[0].strip() if name_parts[0] else ""
+                    data = {
+                        "surname": surname,
+                        "name": name,
+                        "patronymic": "",
+                        "birth_date": "",
+                        "death_date": "",
+                        "birth_place": "",
+                        "death_place": "",
+                        "notes": "",
+                        "image_path": ""
+                    }
+                    # Извлечение дополнительных данных
+                    for child in element.get_child_elements():
+                        if child.get_tag() == "BIRT":
+                            for subchild in child.get_child_elements():
+                                if subchild.get_tag() == "DATE":
+                                    data["birth_date"] = subchild.get_value()
+                                if subchild.get_tag() == "PLAC":
+                                    data["birth_place"] = subchild.get_value()
+                        if child.get_tag() == "DEAT":
+                            for subchild in child.get_child_elements():
+                                if subchild.get_tag() == "DATE":
+                                    data["death_date"] = subchild.get_value()
+                                if subchild.get_tag() == "PLAC":
+                                    data["death_place"] = subchild.get_value()
+                        if child.get_tag() == "NOTE":
+                            data["notes"] = child.get_value()
+                    self.tree.add_person(data)
 
             # Обработка семей
             for element in individuals:
@@ -55,11 +84,27 @@ class GedcomHandler:
 
             # Добавление индивидуумов
             for person_id, person in self.tree.people.items():
-                name = person["name"].split()
-                first_name = name[0]
-                last_name = name[-1] if len(name) > 1 else ""
                 lines.append(f"0 {person_id} INDI")
-                lines.append(f"1 NAME {first_name} /{last_name}/")
+                name = person["name"]
+                surname = person["surname"]
+                lines.append(f"1 NAME {name} /{surname}/")
+                if person["patronymic"]:
+                    lines.append(f"2 GIVN {person['patronymic']}")
+                if person["birth_date"]:
+                    lines.append("1 BIRT")
+                    lines.append(f"2 DATE {person['birth_date']}")
+                    if person["birth_place"]:
+                        lines.append(f"2 PLAC {person['birth_place']}")
+                if person["death_date"]:
+                    lines.append("1 DEAT")
+                    lines.append(f"2 DATE {person['death_date']}")
+                    if person["death_place"]:
+                        lines.append(f"2 PLAC {person['death_place']}")
+                if person["notes"]:
+                    lines.append(f"1 NOTE {person['notes']}")
+                if person["image_path"]:
+                    lines.append("1 OBJE")
+                    lines.append(f"2 FILE {person['image_path']}")
 
             # Завершение файла
             lines.append("0 TRLR")
